@@ -71,9 +71,6 @@ public class Main {
             }
         }
 
-
-        ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
-
         Timer t = new Timer();
         t.schedule(new MySendDataTask(score_entries), 0, delta_x * 1000);
     }
