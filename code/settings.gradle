@@ -1,0 +1,3 @@
+rootProject.name = 'asd'
+include 'src'
+
