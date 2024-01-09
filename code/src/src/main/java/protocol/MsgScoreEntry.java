@@ -3,6 +3,11 @@ package protocol;
 import java.io.Serializable;
 
 public class MsgScoreEntry implements Serializable {
-  int id;
-  int score;
+  public int id;
+  public int score;
+
+  public MsgScoreEntry(int id, int score) {
+    this.id = id;
+    this.score = score;
+  }
 }

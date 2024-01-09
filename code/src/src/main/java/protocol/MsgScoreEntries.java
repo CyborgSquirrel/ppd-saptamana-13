@@ -3,5 +3,9 @@ package protocol;
 import java.io.Serializable;
 
 public class MsgScoreEntries implements Serializable {
-    MsgScoreEntry[] msgScoreEntries;
+    public MsgScoreEntry[] msgScoreEntries;
+
+    public MsgScoreEntries(MsgScoreEntry[] msgScoreEntries) {
+        this.msgScoreEntries = msgScoreEntries;
+    }
 }
