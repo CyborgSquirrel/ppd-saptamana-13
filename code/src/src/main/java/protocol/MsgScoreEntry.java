@@ -10,4 +10,12 @@ public class MsgScoreEntry implements Serializable {
     this.id = id;
     this.score = score;
   }
+
+  @Override
+  public String toString() {
+    return "MsgScoreEntry{" +
+            "id=" + id +
+            ", score=" + score +
+            '}';
+  }
 }

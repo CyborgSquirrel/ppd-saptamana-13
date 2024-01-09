@@ -60,13 +60,14 @@ class Main {
     void close() {
       this.queueLock.lock();
       this.closed = true;
-      this.canRecvCond.notifyAll();
+      this.canRecvCond.signalAll();
       this.queueLock.unlock();
     }
 
     void send(T value) {
       this.queueLock.lock();
 
+      System.out.println(this.queue.size());
       while (this.queue.size() >= MAX_QUEUE_SIZE) {
         try {
           this.canSendCond.await();
@@ -76,7 +77,7 @@ class Main {
       }
       this.queue.add(value);
 
-      this.canRecvCond.notify();
+      this.canRecvCond.signal();
       this.queueLock.unlock();
     }
 
@@ -97,7 +98,7 @@ class Main {
       }
 
       var result = Optional.of(this.queue.poll());
-      this.canSendCond.notify();
+      this.canSendCond.signal();
       return result;
     }
   }
@@ -339,7 +340,7 @@ class Main {
 
         Socket finalClientSocket = clientSocket;
         executorService.submit(() -> {
-            ObjectInputStream inputStream = null;
+          ObjectInputStream inputStream = null;
           try {
             inputStream = new ObjectInputStream(finalClientSocket.getInputStream());
           } catch (IOException e) {
@@ -364,15 +365,21 @@ class Main {
               throw new RuntimeException(e);
             }
 
+            System.out.println(object.getClass());
             if (object instanceof MsgScoreEntries objectSpec) {
+              System.out.println(objectSpec.toString());
               for (MsgScoreEntry msgScoreEntry : objectSpec.msgScoreEntries) {
+                System.out.println("hello");
+                System.out.println(msgScoreEntry);
                 ScoreEntry scoreEntry = new ScoreEntry(
                         msgScoreEntry.id,
                         msgScoreEntry.score,
                         finalCountryIdIter);
                 scoreQueue.send(scoreEntry);
               }
-            } else if (object instanceof MsgGetStatus) {
+              System.out.println("asd");
+            } else if (object instanceof MsgGetStatus objectSpec) {
+              System.out.println(objectSpec.toString());
               // TODO: delta_t garbage
               ObjectOutputStream finalOutputStream = outputStream;
               mainFuturesQueue.send(new FutureTask<>(() -> {

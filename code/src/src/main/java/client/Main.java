@@ -29,9 +29,12 @@ class MySendDataTask extends TimerTask {
     @Override
     public void run() {
         System.out.format("Pos = %d/%d\n", start_pos, score_entries.size());
-        MsgScoreEntry[] score_entries_batch = new MsgScoreEntry[BATCH_SIZE];
+
+        int score_entries_batch_len = Math.min(score_entries.size() - start_pos, BATCH_SIZE);
+
+        MsgScoreEntry[] score_entries_batch = new MsgScoreEntry[score_entries_batch_len];
         int i;
-        for (i = 0; i < BATCH_SIZE && start_pos + i < score_entries.size(); i++) {
+        for (i = 0; i < score_entries_batch_len; i++) {
             score_entries_batch[i] = score_entries.get(start_pos + i);
         }
         System.out.format("Sending %d entries\n", i);
@@ -45,7 +48,7 @@ class MySendDataTask extends TimerTask {
         start_pos += i;
 //        start_pos += BATCH_SIZE;
         if(start_pos == score_entries.size()) {
-            System.out.println("Reached end: " + start_pos + "/" +score_entries.size());
+            System.out.println("Reached end: " + start_pos + "/" + score_entries.size());
             System.out.println("Sending MsgGetStatus...");
             try {
                 output_stream.writeObject(new MsgGetStatus());
@@ -98,7 +101,7 @@ public class Main {
         String[] input_file_paths = new String[number_of_problems];
 
         for(int i = 1; i <= number_of_problems; i++) {
-            String formatted_string = String.format("%s\\RezultateC%d_P%d.txt", folder_path, country, i);
+            String formatted_string = String.format("%s/RezultateC%d_P%d.txt", folder_path, country, i);
             input_file_paths[i - 1] = formatted_string;
         }
 
