@@ -82,7 +82,7 @@ class MySendDataTask extends TimerTask {
                 System.out.println("Error reading MsgGetStatusFinal response");
                 ex.printStackTrace();
             }
-            if(object instanceof MsgFinalStatus object_spec) {
+            if(object_final instanceof MsgFinalStatus object_spec) {
                 System.out.format("MsgGetStatusFinal received.\n", object_spec);
             }
 
