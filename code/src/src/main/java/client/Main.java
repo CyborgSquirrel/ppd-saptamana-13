@@ -13,21 +13,22 @@ import java.util.concurrent.ScheduledExecutorService;
 class MySendDataTask extends TimerTask {
     public ArrayList<MsgScoreEntry> score_entries;
     public int start_pos = 0;
-    final int BATCH_SIZE = 200;
+    int batch_size;
     public ObjectOutputStream output_stream;
     public ObjectInputStream input_stream;
 
-    public MySendDataTask(ArrayList<MsgScoreEntry> score_entries, ObjectOutputStream output_stream, ObjectInputStream input_stream) {
+    public MySendDataTask(ArrayList<MsgScoreEntry> score_entries, ObjectOutputStream output_stream, ObjectInputStream input_stream, int batch_size) {
         this.score_entries = score_entries;
         this.output_stream = output_stream;
         this.input_stream = input_stream;
+        this.batch_size = batch_size;
     }
 
     @Override
     public void run() {
         System.out.format("Pos = %d/%d\n", start_pos, score_entries.size());
 
-        int score_entries_batch_len = Math.min(score_entries.size() - start_pos, BATCH_SIZE);
+        int score_entries_batch_len = Math.min(score_entries.size() - start_pos, batch_size);
 
         MsgScoreEntry[] score_entries_batch = new MsgScoreEntry[score_entries_batch_len];
         int i;
@@ -89,6 +90,12 @@ class MySendDataTask extends TimerTask {
                 System.out.format("MsgGetStatusFinal received.\n", object_spec);
             }
 
+            try {
+                output_stream.close();
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+
             cancel();
         }
     }
@@ -100,6 +107,7 @@ public class Main {
         int country = Integer.parseInt(args[0]);
         int delta_x = Integer.parseInt(args[1]);
         String folder_path = args[2];
+        int batch_size = Integer.parseInt(args[3]);
         int number_of_problems = 10;
 
         String server_address = "localhost";
@@ -148,6 +156,6 @@ public class Main {
         }
 
         Timer t = new Timer();
-        t.schedule(new MySendDataTask(score_entries, output_stream, input_stream), 0, delta_x * 1000);
+        t.schedule(new MySendDataTask(score_entries, output_stream, input_stream, batch_size), 0, delta_x * 1000);
     }
 }
