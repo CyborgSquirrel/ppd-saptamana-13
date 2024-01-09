@@ -76,12 +76,15 @@ class MySendDataTask extends TimerTask {
             }
 
             Object object_final = null;
+            System.out.println("Reading MsgFinalStatus");
             try {
                 object_final = input_stream.readObject();
+                System.out.println("Read MsgFinalStatus");
             } catch(IOException | ClassNotFoundException ex) {
                 System.out.println("Error reading MsgGetStatusFinal response");
                 ex.printStackTrace();
             }
+            System.out.println("Is MsgFinalStatus?");
             if(object_final instanceof MsgFinalStatus object_spec) {
                 System.out.format("MsgGetStatusFinal received.\n", object_spec);
             }
