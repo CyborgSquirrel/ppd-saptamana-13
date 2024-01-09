@@ -1,9 +1,6 @@
 package client;
 
-import protocol.MsgCountryLeaderboard;
-import protocol.MsgGetStatus;
-import protocol.MsgScoreEntries;
-import protocol.MsgScoreEntry;
+import protocol.*;
 
 import java.io.*;
 import java.net.Socket;
@@ -68,6 +65,27 @@ class MySendDataTask extends TimerTask {
             if(object instanceof MsgCountryLeaderboard object_spec) {
                 System.out.format("Leaderboard received. Size = %d\n", object_spec.entries.length);
             }
+
+            System.out.println("Sending MsgGetStatusFinal...");
+            try {
+                output_stream.writeObject(new MsgGetStatusFinal());
+                System.out.println("Succeeded sending MsgGetStatusFinal...");
+            } catch(IOException ex){
+                System.out.println("Error in sending MsgGetStatusFinal");
+                ex.printStackTrace();
+            }
+
+            Object object_final = null;
+            try {
+                object_final = input_stream.readObject();
+            } catch(IOException | ClassNotFoundException ex) {
+                System.out.println("Error reading MsgGetStatusFinal response");
+                ex.printStackTrace();
+            }
+            if(object instanceof MsgFinalStatus object_spec) {
+                System.out.format("MsgGetStatusFinal received.\n", object_spec);
+            }
+
             cancel();
         }
     }
