@@ -1,4 +1,9 @@
+package client;
+
+import protocol.MsgScoreEntry;
+
 import java.io.*;
+import java.net.Socket;
 import java.util.ArrayList;
 import java.util.Timer;
 import java.util.TimerTask;
@@ -6,49 +11,64 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 
 class MySendDataTask extends TimerTask {
-    public ArrayList<ScoreEntry> score_entries;
-    public int current_position = 0;
+    public ArrayList<MsgScoreEntry> score_entries;
+    public int start_pos = 0;
     final int BATCH_SIZE = 20;
+    public ObjectOutputStream output_stream;
 
-    public MySendDataTask(ArrayList<ScoreEntry> score_entries) {
+    public MySendDataTask(ArrayList<MsgScoreEntry> score_entries, ObjectOutputStream output_stream) {
         this.score_entries = score_entries;
+        this.output_stream = output_stream;
     }
 
     @Override
     public void run() {
-        for(int i = current_position; i < current_position + BATCH_SIZE && current_position < score_entries.size(); i++) {
-            System.out.println(score_entries.get(i).id + " " + score_entries.get(i).score);
+        MsgScoreEntry[] score_entries_batch = new MsgScoreEntry[20];
+        for (int i = 0; i < BATCH_SIZE && start_pos + i < score_entries.size(); i++) {
+            score_entries_batch[i] = score_entries.get(start_pos + i);
         }
-        current_position += BATCH_SIZE;
+        try{
+            output_stream.writeObject(score_entries_batch);
+        } catch (IOException ex) {
+            ex.printStackTrace();
+        }
+        start_pos += BATCH_SIZE;
     }
 }
 
 public class Main {
     public static void main(String[] args) {
-//        System.out.println("Working Directory = " + System.getProperty("user.dir"));
+        System.out.println("Working Directory = " + System.getProperty("user.dir"));
         int country = Integer.parseInt(args[0]);
         int delta_x = Integer.parseInt(args[1]);
+        String folder_path = args[2];
         int number_of_problems = 10;
 
         String server_address = "localhost";
-        int server_port = 6666;
+        int server_port = 42069;
 
-//        try(Socket socket = new Socket(server_address, server_port);
-//            BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-//            PrintWriter writer = new PrintWriter(socket.getOutputStream(), true)) {
-//
-//        } catch(IOException e) {
-//            e.printStackTrace();
-//        }
+        Socket socket = null;
+        ObjectInputStream input_stream = null;
+        ObjectOutputStream output_stream = null;
+        System.out.format("Connecting to %s:%d\n", server_address, server_port);
+        try{
+            socket = new Socket(server_address, server_port);
+            output_stream = new ObjectOutputStream(socket.getOutputStream());
+            input_stream = new ObjectInputStream(socket.getInputStream());
+            System.out.println("Connection succeeded!");
+        } catch(IOException e) {
+            System.out.println("Connection failed!");
+            e.printStackTrace();
+        }
 
         String[] input_file_paths = new String[number_of_problems];
 
         for(int i = 1; i <= number_of_problems; i++) {
-            String formatted_string = String.format("data\\RezultateC%d_P%d.txt", country, i);
+            String formatted_string = String.format("%s\\RezultateC%d_P%d.txt", folder_path, country, i);
             input_file_paths[i - 1] = formatted_string;
         }
 
-        ArrayList<ScoreEntry> score_entries = new ArrayList<>();
+        ArrayList<MsgScoreEntry> score_entries = new ArrayList<>();
 
         for(int i = 0; i < input_file_paths.length; i++) {
 //            int problem_number = Integer.parseInt(input_file_paths[i].substring(input_file_paths[i].lastIndexOf('_') + 1));
@@ -60,9 +80,7 @@ public class Main {
                     int id = Integer.parseInt(parts[0].trim());
                     int score = Integer.parseInt(parts[1].trim());
 
-                    ScoreEntry score_entry = new ScoreEntry();
-                    score_entry.id = id;
-                    score_entry.score = score;
+                    MsgScoreEntry score_entry = new MsgScoreEntry(id, score);
 
                     score_entries.add(score_entry);
                 }
@@ -72,6 +90,6 @@ public class Main {
         }
 
         Timer t = new Timer();
-        t.schedule(new MySendDataTask(score_entries), 0, delta_x * 1000);
+        t.schedule(new MySendDataTask(score_entries, output_stream), 0, delta_x * 1000);
     }
 }
