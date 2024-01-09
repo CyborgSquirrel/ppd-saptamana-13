@@ -155,7 +155,84 @@ public class Main {
             }
         }
 
-        Timer t = new Timer();
-        t.schedule(new MySendDataTask(score_entries, output_stream, input_stream, batch_size), 0, delta_x * 1000);
+        int start_pos = 0;
+        while(true) {
+            try {
+                Thread.sleep(delta_x * 1000);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+            System.out.format("Pos = %d/%d\n", start_pos, score_entries.size());
+
+            int score_entries_batch_len = Math.min(score_entries.size() - start_pos, batch_size);
+
+            MsgScoreEntry[] score_entries_batch = new MsgScoreEntry[score_entries_batch_len];
+            int i;
+            for (i = 0; i < score_entries_batch_len; i++) {
+                score_entries_batch[i] = score_entries.get(start_pos + i);
+            }
+            System.out.format("Sending %d entries\n", i);
+            try{
+                MsgScoreEntries score_entries_send_batch = new MsgScoreEntries(score_entries_batch);
+                output_stream.writeObject(score_entries_send_batch);
+                System.out.format("Sending %d entries succeeded\n\n", i);
+            } catch (IOException ex) {
+                ex.printStackTrace();
+            }
+            start_pos += i;
+//        start_pos += BATCH_SIZE;
+            if(start_pos == score_entries.size()) {
+                System.out.println("Reached end: " + start_pos + "/" + score_entries.size());
+                System.out.println("Sending MsgGetStatus...");
+                try {
+                    output_stream.writeObject(new MsgGetStatus());
+                    System.out.println("Succeeded sending MsgGetStatus...");
+                } catch (IOException ex) {
+                    System.out.println("Error in sending MsgGetStatus");
+                    ex.printStackTrace();
+                }
+
+                Object object = null;
+                try {
+                    object = input_stream.readObject();
+                } catch (IOException | ClassNotFoundException ex) {
+                    System.out.println("Error reading MsgGetStatus response");
+                    ex.printStackTrace();
+                }
+                if (object instanceof MsgCountryLeaderboard object_spec) {
+                    System.out.format("Leaderboard received. Size = %d\n", object_spec.entries.length);
+                }
+
+                System.out.println("Sending MsgGetStatusFinal...");
+                try {
+                    output_stream.writeObject(new MsgGetStatusFinal());
+                    System.out.println("Succeeded sending MsgGetStatusFinal...");
+                } catch (IOException ex) {
+                    System.out.println("Error in sending MsgGetStatusFinal");
+                    ex.printStackTrace();
+                }
+
+                Object object_final = null;
+                System.out.println("Reading MsgFinalStatus");
+                try {
+                    object_final = input_stream.readObject();
+                    System.out.println("Read MsgFinalStatus");
+                } catch (IOException | ClassNotFoundException ex) {
+                    System.out.println("Error reading MsgGetStatusFinal response");
+                    ex.printStackTrace();
+                }
+                System.out.println("Is MsgFinalStatus?");
+                if (object_final instanceof MsgFinalStatus object_spec) {
+                    System.out.format("MsgGetStatusFinal received.\n", object_spec);
+                }
+                try {
+                    output_stream.close();
+                    input_stream.close();
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+                return;
+            }
+        }
     }
 }
