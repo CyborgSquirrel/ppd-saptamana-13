@@ -10,9 +10,7 @@ import java.net.Socket;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.locks.Condition;
-import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 class Main {
   static final int MAX_QUEUE_SIZE = 50;
@@ -29,8 +27,8 @@ class Main {
     }
   }
 
-  static class MessageQueue {
-    Queue<ScoreEntry> queue;
+  static class MyQueue<T> {
+    Queue<T> queue;
     ReentrantLock queueLock;
 
     Condition canSendCond;
@@ -38,7 +36,7 @@ class Main {
 
     boolean closed;
 
-    MessageQueue() {
+    MyQueue() {
       this.queue = new ArrayBlockingQueue<>(MAX_QUEUE_SIZE);
       this.queueLock = new ReentrantLock(true);
       this.canSendCond = queueLock.newCondition();
@@ -53,7 +51,7 @@ class Main {
       this.queueLock.unlock();
     }
 
-    void send(ScoreEntry value) {
+    void send(T value) {
       this.queueLock.lock();
 
       while (this.queue.size() >= MAX_QUEUE_SIZE) {
@@ -69,7 +67,7 @@ class Main {
       this.queueLock.unlock();
     }
 
-    Optional<ScoreEntry> recv() {
+    Optional<T> recv() {
       this.queueLock.lock();
 
       while (this.queue.size() <= 0 && !this.closed) {
@@ -139,7 +137,7 @@ class Main {
     float delta_t = Float.parseFloat(args[2]);
 
     // setup
-    MessageQueue messageQueue = new MessageQueue();
+    MyQueue<ScoreEntry> scoreQueue = new MyQueue();
     Set<Integer> cheaters = new HashSet<>();
     ReentrantLock cheatersLock = new ReentrantLock();
     LList llist = new LList();
@@ -147,14 +145,14 @@ class Main {
 
     CountDownLatch finishedWorking = new CountDownLatch(p_w);
 
-    Queue<Future<Void>> mainFuturesQueue = new ConcurrentLinkedQueue<>();
+    MyQueue<Future<Void>> mainFuturesQueue = new MyQueue<>();
 
     // workers
     Thread[] workerThreads = new Thread[p_w];
     for (int i = 0; i < p_w; ++i) {
       workerThreads[i] = new Thread(() -> {
         while (true) {
-          Optional<ScoreEntry> entryPerhaps = messageQueue.recv();
+          Optional<ScoreEntry> entryPerhaps = scoreQueue.recv();
           if (entryPerhaps.isEmpty()) {
             break;
           }
@@ -264,12 +262,12 @@ class Main {
                         msgScoreEntry.id,
                         msgScoreEntry.score,
                         countryId);
-                messageQueue.send(scoreEntry);
+                scoreQueue.send(scoreEntry);
               }
             } else if (object instanceof MsgGetStatus) {
               // TODO: delta_t garbage
               ObjectOutputStream finalOutputStream = outputStream;
-              mainFuturesQueue.add(new FutureTask<>(() -> {
+              mainFuturesQueue.send(new FutureTask<>(() -> {
                 LListNode nodePrev = llist.head     ; nodePrev.item.lock.lock();
                 LListNode node     = llist.head.next;
 
@@ -323,7 +321,12 @@ class Main {
     serverThread.start();
 
     while (true) {
-      Future<Void> future = mainFuturesQueue.poll();
+      Optional<Future<Void>> futurePerhaps = mainFuturesQueue.recv();
+      if (futurePerhaps.isEmpty()) {
+        break;
+      }
+
+      Future<Void> future = futurePerhaps.get();
       try {
         future.get();
       } catch (ExecutionException e) {
@@ -332,9 +335,9 @@ class Main {
     }
 
     // join everyone
-//    serverThread.join();
-//    for (Thread workerThread : workerThreads) {
-//      workerThread.join();
-//    }
+    serverThread.join();
+    for (Thread workerThread : workerThreads) {
+      workerThread.join();
+    }
   }
 }
