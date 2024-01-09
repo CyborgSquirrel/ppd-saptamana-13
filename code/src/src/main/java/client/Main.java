@@ -1,5 +1,8 @@
 package client;
 
+import protocol.MsgCountryLeaderboard;
+import protocol.MsgGetStatus;
+import protocol.MsgScoreEntries;
 import protocol.MsgScoreEntry;
 
 import java.io.*;
@@ -13,26 +16,57 @@ import java.util.concurrent.ScheduledExecutorService;
 class MySendDataTask extends TimerTask {
     public ArrayList<MsgScoreEntry> score_entries;
     public int start_pos = 0;
-    final int BATCH_SIZE = 20;
+    final int BATCH_SIZE = 200;
     public ObjectOutputStream output_stream;
+    public ObjectInputStream input_stream;
 
-    public MySendDataTask(ArrayList<MsgScoreEntry> score_entries, ObjectOutputStream output_stream) {
+    public MySendDataTask(ArrayList<MsgScoreEntry> score_entries, ObjectOutputStream output_stream, ObjectInputStream input_stream) {
         this.score_entries = score_entries;
         this.output_stream = output_stream;
+        this.input_stream = input_stream;
     }
 
     @Override
     public void run() {
-        MsgScoreEntry[] score_entries_batch = new MsgScoreEntry[20];
-        for (int i = 0; i < BATCH_SIZE && start_pos + i < score_entries.size(); i++) {
+        System.out.format("Pos = %d/%d\n", start_pos, score_entries.size());
+        MsgScoreEntry[] score_entries_batch = new MsgScoreEntry[BATCH_SIZE];
+        int i;
+        for (i = 0; i < BATCH_SIZE && start_pos + i < score_entries.size(); i++) {
             score_entries_batch[i] = score_entries.get(start_pos + i);
         }
+        System.out.format("Sending %d entries\n", i);
         try{
-            output_stream.writeObject(score_entries_batch);
+            MsgScoreEntries score_entries_send_batch = new MsgScoreEntries(score_entries_batch);
+            output_stream.writeObject(score_entries_send_batch);
+            System.out.format("Sending %d entries succeeded\n\n", i);
         } catch (IOException ex) {
             ex.printStackTrace();
         }
-        start_pos += BATCH_SIZE;
+        start_pos += i;
+//        start_pos += BATCH_SIZE;
+        if(start_pos == score_entries.size()) {
+            System.out.println("Reached end: " + start_pos + "/" +score_entries.size());
+            System.out.println("Sending MsgGetStatus...");
+            try {
+                output_stream.writeObject(new MsgGetStatus());
+                System.out.println("Succeeded sending MsgGetStatus...");
+            } catch(IOException ex){
+                System.out.println("Error in sending MsgGetStatus");
+                ex.printStackTrace();
+            }
+
+            Object object = null;
+            try {
+                object = input_stream.readObject();
+            } catch(IOException | ClassNotFoundException ex) {
+                System.out.println("Error reading MsgGetStatus response");
+                ex.printStackTrace();
+            }
+            if(object instanceof MsgCountryLeaderboard object_spec) {
+                System.out.format("Leaderboard received. Size = %d\n", object_spec.entries.length);
+            }
+            cancel();
+        }
     }
 }
 
@@ -90,6 +124,6 @@ public class Main {
         }
 
         Timer t = new Timer();
-        t.schedule(new MySendDataTask(score_entries, output_stream), 0, delta_x * 1000);
+        t.schedule(new MySendDataTask(score_entries, output_stream, input_stream), 0, delta_x * 1000);
     }
 }
