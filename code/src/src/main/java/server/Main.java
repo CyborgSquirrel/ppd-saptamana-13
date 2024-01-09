@@ -2,15 +2,16 @@ package server;
 
 import protocol.*;
 
-import java.io.IOException;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
+import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Function;
 
 class Main {
   static final int MAX_QUEUE_SIZE = 50;
@@ -24,6 +25,18 @@ class Main {
       this.id = id;
       this.score = score;
       this.countryId = countryId;
+    }
+
+    public int getId() {
+      return id;
+    }
+
+    public int getScore() {
+      return score;
+    }
+
+    public int getCountryId() {
+      return countryId;
     }
   }
 
@@ -99,6 +112,18 @@ class Main {
       this.score = score;
       this.countryId = countryId;
     }
+
+    public int getId() {
+      return id;
+    }
+
+    public int getScore() {
+      return score;
+    }
+
+    public int getCountryId() {
+      return countryId;
+    }
   }
 
   // linked list
@@ -131,10 +156,66 @@ class Main {
     }
   }
 
+  static class AllLeaderboards {
+    ScoreTotal[] competitorLeaderboard;
+    MsgCountryEntry[] countryLeaderboard;
+
+    public AllLeaderboards(ScoreTotal[] competitorLeaderboard, MsgCountryEntry[] countryLeaderboard) {
+      this.competitorLeaderboard = competitorLeaderboard;
+      this.countryLeaderboard = countryLeaderboard;
+    }
+  }
+
+  static AllLeaderboards computeLeaderboards(LList llist) {
+    LListNode nodePrev = llist.head     ; nodePrev.item.lock.lock();
+    LListNode node     = llist.head.next;
+
+    Map<Integer, Integer> perCountryScoreTotal = new HashMap<>();
+    ArrayList<ScoreTotal> playerScoreTotals = new ArrayList<>();
+    while (node != null) {
+      node.item.lock.lock();
+
+      LListNode finalNode = node;
+      perCountryScoreTotal.compute(
+              node.item.scoreTotal.countryId,
+              (key, value) -> {
+                if (value == null) {
+                  value = 0;
+                }
+                return value + finalNode.item.scoreTotal.score;
+              }
+      );
+      playerScoreTotals.add(node.item.scoreTotal);
+
+      nodePrev.item.lock.unlock();
+      nodePrev = node;
+      node = node.next;
+    }
+    playerScoreTotals.sort(
+            Comparator.comparingInt(ScoreTotal::getScore)
+                    .thenComparing(Comparator.comparingInt(ScoreTotal::getId)));
+
+    MsgCountryEntry[] countryLeaderboard = perCountryScoreTotal.entrySet().stream()
+            .sorted(Comparator.comparing(Map.Entry::getValue))
+            .map(integerIntegerEntry -> new MsgCountryEntry(
+                    integerIntegerEntry.getKey(),
+                    integerIntegerEntry.getValue()))
+            .toArray(MsgCountryEntry[]::new);
+    ScoreTotal[] competitorLeaderboard = playerScoreTotals.toArray(ScoreTotal[]::new);
+
+    return new AllLeaderboards(
+            competitorLeaderboard,
+            countryLeaderboard
+    );
+  }
+
   public static void main(String[] args) throws IOException, InterruptedException {
+    // cli
     int p_r = Integer.parseInt(args[0]);
     int p_w = Integer.parseInt(args[1]);
     float delta_t = Float.parseFloat(args[2]);
+    String competitorLeaderboardPath = args[3];
+    String countryLeaderboardPath = args[4];
 
     // setup
     MyQueue<ScoreEntry> scoreQueue = new MyQueue();
@@ -146,6 +227,31 @@ class Main {
     CountDownLatch finishedWorking = new CountDownLatch(p_w);
 
     MyQueue<Future<Void>> mainFuturesQueue = new MyQueue<>();
+
+    // file writer
+    Function<AllLeaderboards, Void> writeToFiles = (AllLeaderboards data) -> {
+      // competitors
+      try (FileWriter fileWriter = new FileWriter(competitorLeaderboardPath)) {
+        PrintWriter printWriter = new PrintWriter(fileWriter);
+        for (ScoreTotal scoreTotal : data.competitorLeaderboard) {
+          printWriter.printf("%d,%d,%d\n", scoreTotal.id, scoreTotal.countryId, scoreTotal.score);
+        }
+      } catch (IOException e) {
+        throw new RuntimeException(e);
+      }
+
+      // country
+      try (FileWriter fileWriter = new FileWriter(countryLeaderboardPath)) {
+        PrintWriter printWriter = new PrintWriter(fileWriter);
+        for (MsgCountryEntry msgCountryEntry : data.countryLeaderboard) {
+          printWriter.printf("%d,%d\n", msgCountryEntry.countryId, msgCountryEntry.score);
+        }
+      } catch (IOException e) {
+        throw new RuntimeException(e);
+      }
+
+      return null;
+    };
 
     // workers
     Thread[] workerThreads = new Thread[p_w];
@@ -208,6 +314,10 @@ class Main {
     Thread serverThread = new Thread(() -> {
       Phaser socketPhaser = new Phaser();
 
+      final Boolean[] didStartWriter = {false};
+      ReentrantLock didStartWriterLock = new ReentrantLock();
+      CountDownLatch writerFinished = new CountDownLatch(1);
+
       ExecutorService executorService = Executors.newFixedThreadPool(p_r);
       ServerSocket serverSocket = null;
       try {
@@ -229,9 +339,7 @@ class Main {
 
         Socket finalClientSocket = clientSocket;
         executorService.submit(() -> {
-          int countryId = finalCountryIdIter;
-
-          ObjectInputStream inputStream = null;
+            ObjectInputStream inputStream = null;
           try {
             inputStream = new ObjectInputStream(finalClientSocket.getInputStream());
           } catch (IOException e) {
@@ -261,45 +369,16 @@ class Main {
                 ScoreEntry scoreEntry = new ScoreEntry(
                         msgScoreEntry.id,
                         msgScoreEntry.score,
-                        countryId);
+                        finalCountryIdIter);
                 scoreQueue.send(scoreEntry);
               }
             } else if (object instanceof MsgGetStatus) {
               // TODO: delta_t garbage
               ObjectOutputStream finalOutputStream = outputStream;
               mainFuturesQueue.send(new FutureTask<>(() -> {
-                LListNode nodePrev = llist.head     ; nodePrev.item.lock.lock();
-                LListNode node     = llist.head.next;
+                AllLeaderboards leaderboards = computeLeaderboards(llist);
 
-                Map<Integer, Integer> scoreTotal = new HashMap<>();
-
-                while (node != null) {
-                  node.item.lock.lock();
-
-                  LListNode finalNode = node;
-                  scoreTotal.compute(
-                          node.item.scoreTotal.countryId,
-                          (key, value) -> {
-                            if (value == null) {
-                              value = 0;
-                            }
-                            return value + finalNode.item.scoreTotal.score;
-                          }
-                  );
-
-                  nodePrev.item.lock.unlock();
-                  nodePrev = node;
-                  node = node.next;
-                }
-
-                MsgCountryEntry[] scoreTotalArray = scoreTotal.entrySet().stream()
-                        .sorted(Comparator.comparing(Map.Entry::getValue))
-                        .map(integerIntegerEntry -> new MsgCountryEntry(
-                                integerIntegerEntry.getKey().intValue(),
-                                integerIntegerEntry.getValue().intValue()))
-                        .toArray(MsgCountryEntry[]::new);
-
-                var msg = new MsgCountryLeaderboard(scoreTotalArray);
+                var msg = new MsgCountryLeaderboard(leaderboards.countryLeaderboard);
                 synchronized (finalOutputStream) {
                   finalOutputStream.writeObject(msg);
                 }
@@ -308,6 +387,44 @@ class Main {
               }));
             } else if (object instanceof MsgGetStatusFinal) {
               socketPhaser.arriveAndAwaitAdvance();
+
+              didStartWriterLock.lock();
+              if (!didStartWriter[0]) {
+                didStartWriter[0] = true;
+                Thread thread = new Thread(() -> {
+                  AllLeaderboards leaderboards = computeLeaderboards(llist);
+                  writeToFiles.apply(leaderboards);
+                  writerFinished.countDown();
+                });
+                thread.start();
+              }
+              didStartWriterLock.unlock();
+
+              try {
+                writerFinished.await();
+              } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+              }
+
+              byte[] competitorLeaderboard = null;
+              try {
+                competitorLeaderboard = Files.readAllBytes(Path.of(competitorLeaderboardPath));
+              } catch (IOException e) {
+                throw new RuntimeException(e);
+              }
+
+              byte[] countryLeaderboard = null;
+              try {
+                countryLeaderboard = Files.readAllBytes(Path.of(countryLeaderboardPath));
+              } catch (IOException e) {
+                  throw new RuntimeException(e);
+              }
+
+              try {
+                outputStream.writeObject(new MsgFinalStatus(countryLeaderboard, competitorLeaderboard));
+              } catch (IOException e) {
+                throw new RuntimeException(e);
+              }
 
               socketPhaser.arriveAndDeregister();
             } else {
