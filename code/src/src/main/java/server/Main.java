@@ -192,6 +192,8 @@ class Main {
       nodePrev = node;
       node = node.next;
     }
+    nodePrev.item.lock.unlock();
+
     playerScoreTotals.sort(
             Comparator.comparingInt(ScoreTotal::getScore)
                     .thenComparing(Comparator.comparingInt(ScoreTotal::getId)));
@@ -210,6 +212,32 @@ class Main {
     );
   }
 
+  public static void writeToFiles(
+          String competitorLeaderboardPath,
+          String countryLeaderboardPath,
+          AllLeaderboards data
+  ) {
+    // competitors
+    try (FileWriter fileWriter = new FileWriter(competitorLeaderboardPath)) {
+      PrintWriter printWriter = new PrintWriter(fileWriter);
+      for (ScoreTotal scoreTotal : data.competitorLeaderboard) {
+        printWriter.printf("%d,%d,%d\n", scoreTotal.id, scoreTotal.countryId, scoreTotal.score);
+      }
+    } catch (IOException e) {
+      throw new RuntimeException(e);
+    }
+
+    // country
+    try (FileWriter fileWriter = new FileWriter(countryLeaderboardPath)) {
+      PrintWriter printWriter = new PrintWriter(fileWriter);
+      for (MsgCountryEntry msgCountryEntry : data.countryLeaderboard) {
+        printWriter.printf("%d,%d\n", msgCountryEntry.countryId, msgCountryEntry.score);
+      }
+    } catch (IOException e) {
+      throw new RuntimeException(e);
+    }
+  };
+
   public static void main(String[] args) throws IOException, InterruptedException {
     // cli
     int p_r = Integer.parseInt(args[0]);
@@ -227,32 +255,9 @@ class Main {
 
     CountDownLatch finishedWorking = new CountDownLatch(p_w);
 
-    MyQueue<Future<Void>> mainFuturesQueue = new MyQueue<>();
+    MyQueue<FutureTask<Void>> mainFuturesQueue = new MyQueue<>();
 
     // file writer
-    Function<AllLeaderboards, Void> writeToFiles = (AllLeaderboards data) -> {
-      // competitors
-      try (FileWriter fileWriter = new FileWriter(competitorLeaderboardPath)) {
-        PrintWriter printWriter = new PrintWriter(fileWriter);
-        for (ScoreTotal scoreTotal : data.competitorLeaderboard) {
-          printWriter.printf("%d,%d,%d\n", scoreTotal.id, scoreTotal.countryId, scoreTotal.score);
-        }
-      } catch (IOException e) {
-        throw new RuntimeException(e);
-      }
-
-      // country
-      try (FileWriter fileWriter = new FileWriter(countryLeaderboardPath)) {
-        PrintWriter printWriter = new PrintWriter(fileWriter);
-        for (MsgCountryEntry msgCountryEntry : data.countryLeaderboard) {
-          printWriter.printf("%d,%d\n", msgCountryEntry.countryId, msgCountryEntry.score);
-        }
-      } catch (IOException e) {
-        throw new RuntimeException(e);
-      }
-
-      return null;
-    };
 
     // workers
     Thread[] workerThreads = new Thread[p_w];
@@ -369,15 +374,12 @@ class Main {
             if (object instanceof MsgScoreEntries objectSpec) {
               System.out.println(objectSpec.toString());
               for (MsgScoreEntry msgScoreEntry : objectSpec.msgScoreEntries) {
-                System.out.println("hello");
-                System.out.println(msgScoreEntry);
                 ScoreEntry scoreEntry = new ScoreEntry(
                         msgScoreEntry.id,
                         msgScoreEntry.score,
                         finalCountryIdIter);
                 scoreQueue.send(scoreEntry);
               }
-              System.out.println("asd");
             } else if (object instanceof MsgGetStatus objectSpec) {
               System.out.println(objectSpec.toString());
               // TODO: delta_t garbage
@@ -392,7 +394,8 @@ class Main {
 
                 return null;
               }));
-            } else if (object instanceof MsgGetStatusFinal) {
+            } else if (object instanceof MsgGetStatusFinal objectSpec) {
+              System.out.println(objectSpec.toString());
               socketPhaser.arriveAndAwaitAdvance();
 
               didStartWriterLock.lock();
@@ -400,7 +403,7 @@ class Main {
                 didStartWriter[0] = true;
                 Thread thread = new Thread(() -> {
                   AllLeaderboards leaderboards = computeLeaderboards(llist);
-                  writeToFiles.apply(leaderboards);
+                  writeToFiles(competitorLeaderboardPath, countryLeaderboardPath, leaderboards);
                   writerFinished.countDown();
                 });
                 thread.start();
@@ -445,17 +448,13 @@ class Main {
     serverThread.start();
 
     while (true) {
-      Optional<Future<Void>> futurePerhaps = mainFuturesQueue.recv();
+      Optional<FutureTask<Void>> futurePerhaps = mainFuturesQueue.recv();
       if (futurePerhaps.isEmpty()) {
         break;
       }
 
-      Future<Void> future = futurePerhaps.get();
-      try {
-        future.get();
-      } catch (ExecutionException e) {
-        throw new RuntimeException(e);
-      }
+      FutureTask<Void> future = futurePerhaps.get();
+      future.run();
     }
 
     // join everyone
