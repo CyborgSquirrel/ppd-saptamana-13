@@ -248,6 +248,7 @@ class Main {
     long delta_t = (long) (Float.parseFloat(args[2]) * 1000);
     String competitorLeaderboardPath = args[3];
     String countryLeaderboardPath = args[4];
+    int serverPort = Integer.parseInt(args[5]);
 
     // setup
     MyQueue<ScoreEntry> scoreQueue = new MyQueue();
@@ -334,7 +335,7 @@ class Main {
 
       ServerSocket serverSocket = null;
       try {
-        serverSocket = new ServerSocket(42069);
+        serverSocket = new ServerSocket(serverPort);
       } catch (IOException e) {
         throw new RuntimeException(e);
       }

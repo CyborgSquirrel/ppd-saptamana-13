@@ -1,7 +1,9 @@
+import asyncio
 import csv
 import dataclasses
 import itertools
 import pathlib
+import shutil
 import subprocess
 import tempfile
 import time as timelib
@@ -9,6 +11,9 @@ import time as timelib
 # TRIALS = 1000
 # TRIALS = 10
 TRIALS = 1
+
+CHUNK_SIZE = 20
+# CHUNK_SIZE = 500
 
 DATA_DIR = pathlib.Path("data")
 PROJECT_PATH = pathlib.Path("code")
@@ -39,11 +44,18 @@ class Result:
     passed_check: bool
 
 
-def run_java(test: Test) -> Result:
+port_generator = itertools.count(4096)
+
+
+async def run_java(test: Test) -> Result:
+    port = next(port_generator)
     with tempfile.TemporaryDirectory() as tmp_dir:
     # if True:
         tmp_dir = pathlib.Path(tmp_dir)
+
         # tmp_dir = pathlib.Path("./tmp")
+        # if tmp_dir.exists():
+        #     shutil.rmtree(tmp_dir)
         # tmp_dir.mkdir(parents=True)
 
         competitor_leaderboard_path = tmp_dir / "competitors.txt"
@@ -55,7 +67,7 @@ def run_java(test: Test) -> Result:
 
             time_start = timelib.time()
             
-            process = subprocess.Popen([
+            process = await asyncio.create_subprocess_exec(
                 "java",
                 "-cp", str(CLASS_PATH),
                 "server.Main",
@@ -64,26 +76,29 @@ def run_java(test: Test) -> Result:
                 str(test.delta_t),
                 str(competitor_leaderboard_path),
                 str(country_leaderboard_path),
-            ], stdout=f, stderr=f)
+                str(port),
+                stdout=f, stderr=f,
+            )
             processes.append(process)
 
             timelib.sleep(0.5)
 
             for country_i in range(5):
-                process = subprocess.Popen([
+                process = await asyncio.create_subprocess_exec(
                     "java",
                     "-cp", str(CLASS_PATH),
                     "client.Main",
                     str(country_i+1),
                     str(test.delta_x),
                     str(DATA_DIR),
-                    # "20",
-                    "500",
-                ], stdout=f, stderr=f)
+                    str(CHUNK_SIZE),
+                    str(port),
+                    stdout=f, stderr=f,
+                )
                 processes.append(process)
 
             for process in processes:
-                process.wait()
+                await process.wait()
 
             time_end = timelib.time()
             time_elapsed = time_end - time_start
@@ -112,21 +127,21 @@ runners = dict(
 ALL_RUNNERS = list(runners.keys())
 
 tests = itertools.chain.from_iterable(
-    # [[("java", 2, 4, 1, 0.001)]]
+    [[("java", 2, 4, 1, 0.001)]]
 
-    itertools.product(
-        ["java"],
-        [p_r], [p_w],
-        [1, 2],
-        [0.001, 0.002, 0.004],
-    )
-    for p_r, p_w
-    in [
-        (4, 4),
-        (2, 2),
-        (4, 2),
-        (4, 8),
-    ]
+    # itertools.product(
+    #     ["java"],
+    #     [p_r], [p_w],
+    #     [1, 2],
+    #     [0.001, 0.002, 0.004],
+    # )
+    # for p_r, p_w
+    # in [
+    #     (4, 4),
+    #     (2, 2),
+    #     (4, 2),
+    #     (4, 8),
+    # ]
 )
 
 tests = [
@@ -134,21 +149,34 @@ tests = [
 ]
 
 
-with open("data.csv", "w") as f:
-    fc = csv.writer(f)
-    fc.writerow(
-          [field.name for field in dataclasses.fields(Test)]
-        + ["time"]
-    )
+async def main():
+    with open("data.csv", "w") as f:
+        fc = csv.writer(f)
+        fc.writerow(
+              [field.name for field in dataclasses.fields(Test)]
+            + ["time"]
+        )
 
-    for test in tests:
-        print(test)
+        semaphore = asyncio.Semaphore(80)
+        async with asyncio.TaskGroup() as group:
+            for test in tests:
+                print(test)
 
-        runner = runners[test.runner]
+                runner = runners[test.runner]
 
-        for trial_index in range(TRIALS):
-            result = runner(test)
-            fc.writerow(
-                dataclasses.astuple(result.test) + (result.time,)
-            )
-            f.flush()
+                async def run_trial():
+                    result = await runner(test)
+                    fc.writerow(
+                        dataclasses.astuple(result.test) + (result.time,)
+                    )
+                    f.flush()
+                    semaphore.release()
+
+                for trial_index in range(TRIALS):
+                    await semaphore.acquire()
+                    group.create_task(run_trial())
+                    await asyncio.sleep(1)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
