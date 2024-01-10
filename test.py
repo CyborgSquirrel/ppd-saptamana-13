@@ -4,19 +4,32 @@ import itertools
 import pathlib
 import subprocess
 import tempfile
+import time as timelib
 
 # TRIALS = 1000
-TRIALS = 10
-# TRIALS = 1
+# TRIALS = 10
+TRIALS = 1
 
-DATA_DIR = "./data"
+DATA_DIR = pathlib.Path("data")
+PROJECT_PATH = pathlib.Path("code")
+CLASS_PATH = PROJECT_PATH / "src" / "build" / "classes" / "java" / "main"
+
+CORRECT_PATH = pathlib.Path("competitors-correct.txt")
+
+# run gravel
+subprocess.run(
+    ["./gradlew", "build"],
+    cwd=str(PROJECT_PATH),
+)
 
 
 @dataclasses.dataclass
 class Test:
+    runner: str
     p_r: int
     p_w: int
-    runner: str
+    delta_x: int
+    delta_t: float
 
 
 @dataclasses.dataclass
@@ -26,40 +39,61 @@ class Result:
     passed_check: bool
 
 
-def run_cpp(test: Test) -> Result:
+def run_java(test: Test) -> Result:
     with tempfile.TemporaryDirectory() as tmp_dir:
+    # if True:
         tmp_dir = pathlib.Path(tmp_dir)
-        result_path = tmp_dir / "result.txt"
-        time_path = tmp_dir / "time.txt"
-        if test.p_r == 0 and test.p_w == 0:
-            subprocess.run([
-                "./target/sequential",
-                DATA_DIR,
-                str(result_path),
-                str(time_path),
-            ])
-        else:
-            subprocess.run([
-                "./target/threaded",
-                DATA_DIR,
-                str(result_path),
-                str(time_path),
+        # tmp_dir = pathlib.Path("./tmp")
+        # tmp_dir.mkdir(parents=True)
+
+        competitor_leaderboard_path = tmp_dir / "competitors.txt"
+        country_leaderboard_path = tmp_dir / "countries.txt"
+
+        log_path = pathlib.Path(".") / "log.txt"
+        with log_path.open("w") as f:
+            processes = []
+
+            time_start = timelib.time()
+            
+            process = subprocess.Popen([
+                "java",
+                "-cp", str(CLASS_PATH),
+                "server.Main",
                 str(test.p_r),
                 str(test.p_w),
-            ])
+                str(test.delta_t),
+                str(competitor_leaderboard_path),
+                str(country_leaderboard_path),
+            ], stdout=f, stderr=f)
+            processes.append(process)
 
-        with time_path.open() as f:
-            time = float(f.read().strip())
+            timelib.sleep(0.5)
 
-        check_path = pathlib.Path("check") / "result.txt"
-        with (
-            check_path.open() as check_file,
-            result_path.open() as result_file,
-        ):
-            check_content = check_file.read()
-            result_content = result_file.read()
+            for country_i in range(5):
+                process = subprocess.Popen([
+                    "java",
+                    "-cp", str(CLASS_PATH),
+                    "client.Main",
+                    str(country_i+1),
+                    str(test.delta_x),
+                    str(DATA_DIR),
+                    # "20",
+                    "500",
+                ], stdout=f, stderr=f)
+                processes.append(process)
 
-        passed_check = check_content == result_content
+            for process in processes:
+                process.wait()
+
+            time_end = timelib.time()
+            time_elapsed = time_end - time_start
+
+            with competitor_leaderboard_path.open() as f:
+                competitors_content = f.read()
+            with CORRECT_PATH.open() as f:
+                competitors_content_correct = f.read()
+
+        passed_check = (competitors_content == competitors_content_correct)
 
         if not passed_check:
             print("Failed the check. Darnit -_-.")
@@ -67,20 +101,33 @@ def run_cpp(test: Test) -> Result:
 
         return Result(
             test,
-            time,
+            time_elapsed,
             passed_check,
         )
 
 
 runners = dict(
-    cpp=run_cpp,
+    java=run_java,
 )
 ALL_RUNNERS = list(runners.keys())
 
-tests = itertools.chain.from_iterable([
-    itertools.product([0], [0], ["cpp"]),
-    itertools.product([4], [2, 4, 12], ["cpp"]),
-])
+tests = itertools.chain.from_iterable(
+    # [[("java", 2, 4, 1, 0.001)]]
+
+    itertools.product(
+        ["java"],
+        [p_r], [p_w],
+        [1, 2],
+        [0.001, 0.002, 0.004],
+    )
+    for p_r, p_w
+    in [
+        (4, 4),
+        (2, 2),
+        (4, 2),
+        (4, 8),
+    ]
+)
 
 tests = [
     Test(*test) for test in tests

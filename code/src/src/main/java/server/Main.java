@@ -51,7 +51,7 @@ class Main {
 
     MyQueue() {
       this.queue = new ArrayBlockingQueue<>(MAX_QUEUE_SIZE);
-      this.queueLock = new ReentrantLock(true);
+      this.queueLock = new ReentrantLock();
       this.canSendCond = queueLock.newCondition();
       this.canRecvCond = queueLock.newCondition();
       this.closed = false;
@@ -59,15 +59,16 @@ class Main {
 
     void close() {
       this.queueLock.lock();
-      this.closed = true;
-      this.canRecvCond.signalAll();
+      if (!this.closed) {
+        this.closed = true;
+        this.canRecvCond.signalAll();
+      }
       this.queueLock.unlock();
     }
 
     void send(T value) {
       this.queueLock.lock();
 
-      System.out.println(this.queue.size());
       while (this.queue.size() >= MAX_QUEUE_SIZE) {
         try {
           this.canSendCond.await();
@@ -99,6 +100,8 @@ class Main {
 
       var result = Optional.of(this.queue.poll());
       this.canSendCond.signal();
+      this.queueLock.unlock();
+
       return result;
     }
   }
@@ -195,7 +198,7 @@ class Main {
     nodePrev.item.lock.unlock();
 
     playerScoreTotals.sort(
-            Comparator.comparingInt(ScoreTotal::getScore)
+            Comparator.comparingInt(ScoreTotal::getScore).reversed()
                     .thenComparing(Comparator.comparingInt(ScoreTotal::getId)));
 
     MsgCountryEntry[] countryLeaderboard = perCountryScoreTotal.entrySet().stream()
@@ -221,7 +224,7 @@ class Main {
     try (FileWriter fileWriter = new FileWriter(competitorLeaderboardPath)) {
       PrintWriter printWriter = new PrintWriter(fileWriter);
       for (ScoreTotal scoreTotal : data.competitorLeaderboard) {
-        printWriter.printf("%d,%d,%d\n", scoreTotal.id, scoreTotal.countryId, scoreTotal.score);
+        printWriter.printf("%d,%d,%d\n", scoreTotal.id, scoreTotal.score, scoreTotal.countryId);
       }
     } catch (IOException e) {
       throw new RuntimeException(e);
@@ -242,7 +245,7 @@ class Main {
     // cli
     int p_r = Integer.parseInt(args[0]);
     int p_w = Integer.parseInt(args[1]);
-    float delta_t = Float.parseFloat(args[2]);
+    long delta_t = (long) (Float.parseFloat(args[2]) * 1000);
     String competitorLeaderboardPath = args[3];
     String countryLeaderboardPath = args[4];
 
@@ -257,12 +260,12 @@ class Main {
 
     MyQueue<FutureTask<Void>> mainFuturesQueue = new MyQueue<>();
 
-    // file writer
-
     // workers
     Thread[] workerThreads = new Thread[p_w];
     for (int i = 0; i < p_w; ++i) {
+      int finalI = i;
       workerThreads[i] = new Thread(() -> {
+        System.out.println("Worker " + finalI);
         while (true) {
           Optional<ScoreEntry> entryPerhaps = scoreQueue.recv();
           if (entryPerhaps.isEmpty()) {
@@ -311,27 +314,31 @@ class Main {
             nodePrev.item.lock.unlock();
           }
         }
+        System.out.println("Finished working " + finalI);
         finishedWorking.countDown();
       });
       workerThreads[i].start();
     }
 
     // socket server
+    ExecutorService executorService = Executors.newFixedThreadPool(p_r);
     Thread serverThread = new Thread(() -> {
+      final AllLeaderboards[] cachedLeaderboards = {null};
+      final Long[] lastLeaderboardsUpdate = {null};
+
       Phaser socketPhaser = new Phaser();
 
       final Boolean[] didStartWriter = {false};
       ReentrantLock didStartWriterLock = new ReentrantLock();
       CountDownLatch writerFinished = new CountDownLatch(1);
 
-      ExecutorService executorService = Executors.newFixedThreadPool(p_r);
       ServerSocket serverSocket = null;
       try {
         serverSocket = new ServerSocket(42069);
       } catch (IOException e) {
         throw new RuntimeException(e);
       }
-      int countryIdIter = 0;
+
       while (true) {
         Socket clientSocket = null;
         try {
@@ -339,12 +346,14 @@ class Main {
         } catch (IOException e) {
           throw new RuntimeException(e);
         }
+        System.out.println("Got a connection!");
 
         // java complains without this *awesome* boilerplate
-        int finalCountryIdIter = countryIdIter;
-
         Socket finalClientSocket = clientSocket;
+
+        socketPhaser.register();
         executorService.submit(() -> {
+          System.out.println("Started connection thread!");
           ObjectInputStream inputStream = null;
           try {
             inputStream = new ObjectInputStream(finalClientSocket.getInputStream());
@@ -359,7 +368,6 @@ class Main {
             throw new RuntimeException(e);
           }
 
-          socketPhaser.register();
           while (!finalClientSocket.isClosed()) {
             Object object = null;
             try {
@@ -377,15 +385,19 @@ class Main {
                 ScoreEntry scoreEntry = new ScoreEntry(
                         msgScoreEntry.id,
                         msgScoreEntry.score,
-                        finalCountryIdIter);
+                        msgScoreEntry.countryId);
                 scoreQueue.send(scoreEntry);
               }
             } else if (object instanceof MsgGetStatus objectSpec) {
               System.out.println(objectSpec.toString());
-              // TODO: delta_t garbage
               ObjectOutputStream finalOutputStream = outputStream;
               mainFuturesQueue.send(new FutureTask<>(() -> {
-                AllLeaderboards leaderboards = computeLeaderboards(llist);
+                AllLeaderboards leaderboards = null;
+                if (lastLeaderboardsUpdate[0] == null || lastLeaderboardsUpdate[0] > System.currentTimeMillis() + delta_t) {
+                  cachedLeaderboards[0] = computeLeaderboards(llist);
+                  lastLeaderboardsUpdate[0] = System.currentTimeMillis();
+                }
+                leaderboards = cachedLeaderboards[0];
 
                 var msg = new MsgCountryLeaderboard(leaderboards.countryLeaderboard);
                 synchronized (finalOutputStream) {
@@ -395,54 +407,72 @@ class Main {
                 return null;
               }));
             } else if (object instanceof MsgGetStatusFinal objectSpec) {
-              System.out.println(objectSpec.toString());
-              socketPhaser.arriveAndAwaitAdvance();
+              ObjectOutputStream finalOutputStream1 = outputStream;
+              Thread thread = new Thread(() -> {
+                System.out.println(objectSpec.toString());
+                socketPhaser.arriveAndAwaitAdvance();
 
-              didStartWriterLock.lock();
-              if (!didStartWriter[0]) {
-                didStartWriter[0] = true;
-                Thread thread = new Thread(() -> {
-                  AllLeaderboards leaderboards = computeLeaderboards(llist);
-                  writeToFiles(competitorLeaderboardPath, countryLeaderboardPath, leaderboards);
-                  writerFinished.countDown();
-                });
-                thread.start();
-              }
-              didStartWriterLock.unlock();
-
-              try {
-                writerFinished.await();
-              } catch (InterruptedException e) {
-                throw new RuntimeException(e);
-              }
-
-              byte[] competitorLeaderboard = null;
-              try {
-                competitorLeaderboard = Files.readAllBytes(Path.of(competitorLeaderboardPath));
-              } catch (IOException e) {
-                throw new RuntimeException(e);
-              }
-
-              byte[] countryLeaderboard = null;
-              try {
-                countryLeaderboard = Files.readAllBytes(Path.of(countryLeaderboardPath));
-              } catch (IOException e) {
+                scoreQueue.close();
+                try {
+                  finishedWorking.await();
+                } catch (InterruptedException e) {
                   throw new RuntimeException(e);
-              }
+                }
 
-              try {
-                outputStream.writeObject(new MsgFinalStatus(countryLeaderboard, competitorLeaderboard));
-              } catch (IOException e) {
-                throw new RuntimeException(e);
-              }
+                didStartWriterLock.lock();
+                if (!didStartWriter[0]) {
+                  didStartWriter[0] = true;
+                  Thread thread2 = new Thread(() -> {
+                    AllLeaderboards leaderboards = computeLeaderboards(llist);
+                    writeToFiles(competitorLeaderboardPath, countryLeaderboardPath, leaderboards);
+                    writerFinished.countDown();
+                  });
+                  thread2.start();
+                }
+                didStartWriterLock.unlock();
 
-              socketPhaser.arriveAndDeregister();
+                try {
+                  writerFinished.await();
+                } catch (InterruptedException e) {
+                  throw new RuntimeException(e);
+                }
+
+                byte[] competitorLeaderboard = null;
+                try {
+                  competitorLeaderboard = Files.readAllBytes(Path.of(competitorLeaderboardPath));
+                } catch (IOException e) {
+                  throw new RuntimeException(e);
+                }
+
+                byte[] countryLeaderboard = null;
+                try {
+                  countryLeaderboard = Files.readAllBytes(Path.of(countryLeaderboardPath));
+                } catch (IOException e) {
+                  throw new RuntimeException(e);
+                }
+
+                try {
+                  MsgFinalStatus msg = new MsgFinalStatus(countryLeaderboard, competitorLeaderboard);
+                  System.out.println(msg);
+                  finalOutputStream1.writeObject(msg);
+                } catch (IOException e) {
+                  throw new RuntimeException(e);
+                }
+
+                socketPhaser.arriveAndDeregister();
+
+                if (socketPhaser.getRegisteredParties() == 0) {
+                  mainFuturesQueue.close();
+                }
+              });
+              thread.start();
+
+              break;
             } else {
               assert false;
             }
           }
         });
-        countryIdIter += 1;
       }
     });
     serverThread.start();
@@ -458,9 +488,12 @@ class Main {
     }
 
     // join everyone
-    serverThread.join();
+    System.out.println("Joining everyone");
+    serverThread.interrupt();
+//    executorService.shutdown();
     for (Thread workerThread : workerThreads) {
       workerThread.join();
     }
+    System.exit(0);
   }
 }

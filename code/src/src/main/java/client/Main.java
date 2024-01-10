@@ -146,7 +146,7 @@ public class Main {
                     int id = Integer.parseInt(parts[0].trim());
                     int score = Integer.parseInt(parts[1].trim());
 
-                    MsgScoreEntry score_entry = new MsgScoreEntry(id, score);
+                    MsgScoreEntry score_entry = new MsgScoreEntry(id, score, country);
 
                     score_entries.add(score_entry);
                 }

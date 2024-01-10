@@ -5,10 +5,12 @@ import java.io.Serializable;
 public class MsgScoreEntry implements Serializable {
   public int id;
   public int score;
+  public int countryId;
 
-  public MsgScoreEntry(int id, int score) {
+  public MsgScoreEntry(int id, int score, int countryId) {
     this.id = id;
     this.score = score;
+    this.countryId = countryId;
   }
 
   @Override
@@ -16,6 +18,7 @@ public class MsgScoreEntry implements Serializable {
     return "MsgScoreEntry{" +
             "id=" + id +
             ", score=" + score +
+            ", countryId=" + countryId +
             '}';
   }
 }
